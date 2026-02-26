@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <title>Cesium IFC – Pipe to ThingSpeak</title>
+
+  <link href="https://cesium.com/downloads/cesiumjs/releases/1.128/Build/Cesium/Widgets/widgets.css" rel="stylesheet"/>
+  <script src="https://cesium.com/downloads/cesiumjs/releases/1.128/Build/Cesium/Cesium.js" defer></script>
+
+  <style>
+    html, body, #cesiumContainer {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+    }
+  </style>
+</head>
+
+<body>
+<div id="cesiumContainer"></div>
+
+<script>
+window.addEventListener("load", async () => {
+
+  /* =======================
+     1️⃣ CESIUM TOKEN
+  ======================= */
+  Cesium.Ion.defaultAccessToken =
+    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiIxYzg3MjkzNy1hN2ZiLTQ1NDktYTZmZS0wMDZhNTg0MDE3NDQiLCJpZCI6MjkwNTA4LCJpYXQiOjE3NjczODM0MzB9.uiMKbic_hC7EnSfVJD1t0cMg7qjVDmlBgTTiiCvKQDk";
+
+  /* =======================
+     2️⃣ VIEWER + OSM
+  ======================= */
+  const viewer = new Cesium.Viewer("cesiumContainer", {
+    animation: false,
+    timeline: false,
+    baseLayerPicker: false,
+    imageryProvider: false
+  });
+
+  window.viewer = viewer;
+
+  viewer.imageryLayers.addImageryProvider(
+    new Cesium.OpenStreetMapImageryProvider({
+      url: "https://tile.openstreetmap.org/"
+    })
+  );
+
+  viewer.scene.globe.show = true;
+  viewer.scene.skyBox.show = false;
+  viewer.scene.backgroundColor = Cesium.Color.BLACK;
+
+  console.log("Imagery layers count:", viewer.imageryLayers.length);
+
+  /* =======================
+     3️⃣ LOAD IFC TILESET
+  ======================= */
+  const tileset =
+    await Cesium.Cesium3DTileset.fromIonAssetId(4356579);
+
+  viewer.scene.primitives.add(tileset);
+  await viewer.zoomTo(tileset);
+
+    /* =======================
+    SENSOR FEATURE CACHE
+    ======================= */
+    const SENSOR_CACHE = {};
+
+    tileset.tileVisible.addEventListener(tile => {
+    const content = tile.content;
+    if (!content || !content.featuresLength) return;
+
+    for (let i = 0; i < content.featuresLength; i++) {
+        const f = content.getFeature(i);
+        const sensorId = getProp(f, "textSensorID");
+        if (sensorId && !SENSOR_CACHE[sensorId]) {
+        SENSOR_CACHE[sensorId] = f;
+        }
+    }
+    });
+
+
+
+  /* =======================
+     4️⃣ THINGSPEAK
+  ======================= */
+  const TS_URL =
+    "https://api.thingspeak.com/channels/3104829/feeds/last.json?api_key=NYQKK6PS1ANTGD29";
+
+  let latestTSData = {};
+
+  async function fetchThingSpeak() {
+    latestTSData = await (await fetch(TS_URL)).json();
+  }
+
+  await fetchThingSpeak();
+  setInterval(fetchThingSpeak, 10000);
+
+  function getTSValue(fieldId) {
+    if (!fieldId || !latestTSData) return null;
+    const key = fieldId.toLowerCase().replace("_", "");
+    return +latestTSData[key];
+  }
+
+  // ✅ USE FIELD ID STORED IN REVIT (BEST PRACTICE)
+    function getTSValueFromIFC(fieldId) {
+    if (!fieldId || !latestTSData) return null;
+
+    // Handles: Field_6, field_6, FIELD6
+    const match = fieldId.match(/(\d+)/);
+    if (!match) return null;
+
+    const key = "field" + match[1]; // field6
+    return +latestTSData[key];
+    }
+
+
+
+
+  /* =======================
+     5️⃣ SAFE IFC HELPERS
+  ======================= */
+  function getProp(feature, name) {
+    if (!feature || typeof feature.getProperty !== "function") return undefined;
+    return feature.getProperty(name);
+  }
+  
+  
+    function findSensorFeature(sensorId) {
+    if (!sensorId) return null;
+    return SENSOR_CACHE[sensorId] || null;
+    }
+
+
+  /* =======================
+     6️⃣ HOVER TOOLTIP
+  ======================= */
+  const hoverDiv = document.createElement("div");
+  hoverDiv.style.cssText = `
+    position:absolute;
+    background:rgba(0,0,0,0.8);
+    color:white;
+    padding:6px 8px;
+    border-radius:4px;
+    font-size:12px;
+    pointer-events:none;
+    display:none;
+    z-index:1000;
+  `;
+  document.body.appendChild(hoverDiv);
+
+  /* =======================
+     7️⃣ CLICK STATE
+  ======================= */
+  let selectedFeature = null;
+  let originalColor = null;
+
+  const handler =
+    new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+
+  /* =======================
+     8️⃣ CLICK HANDLER
+  ======================= */
+  handler.setInputAction((movement) => {
+
+    const picked = viewer.scene.pick(movement.position);
+    if (!Cesium.defined(picked) || !picked.getProperty) return;
+
+    // 🔒 ONLY PIPES
+    const pipeId = getProp(picked, "textPipeID");
+    if (!pipeId) return;
+
+    // restore previous highlight
+    if (selectedFeature && originalColor) {
+      selectedFeature.color = originalColor.clone();
+    }
+
+    selectedFeature = picked;
+    originalColor = picked.color.clone();
+    picked.color = Cesium.Color.DARKBLUE.withAlpha(0.9);
+
+    // read sensor IDs from PIPE
+    const pSensorId =
+      getProp(picked, "textassociatedPressureSensorID");
+
+    const fSensorId =
+      getProp(picked, "textassociatedFlowSensorID");
+
+    // 🔍 DEBUG — TEMPORARY (HOW TO CONFIRM IN 10 SECONDS)
+    console.log("Pipe ID:", pipeId);
+    console.log("Pressure Sensor ID:", pSensorId);
+    console.log("Flow Sensor ID:", fSensorId);
+
+    const pSensor = findSensorFeature(pSensorId);
+    const fSensor = findSensorFeature(fSensorId);
+
+    console.log("Flow Sensor Feature:", fSensor?.getProperty("textfieldid"));
+    console.log("Pressure Sensor Feature:", pSensor?.getProperty("textfieldid"));
+
+
+    const pField = getProp(pSensor, "textfieldid");
+    const fField = getProp(fSensor, "textfieldid");
+
+    const pressure = getTSValueFromIFC(pField);
+    const flow = getTSValueFromIFC(fField);
+
+    /*const pressure = getValueBySensorId(pSensorId);
+    const flow = getValueBySensorId(fSensorId);*/
+
+
+    alert(
+      `PIPE LIVE DATA\n\n` +
+      `Pipe ID: ${pipeId}\n\n` +
+      `Pressure Sensor: ${pSensorId}\n` +
+      `Pressure: ${pressure?.toFixed(2)} Bar\n\n` +
+      `Flow Sensor: ${fSensorId}\n` +
+      `Flow: ${flow?.toFixed(3)} L/min`
+    );
+
+  }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
+
+  /* =======================
+     9️⃣ HOVER HANDLER
+  ======================= */
+  handler.setInputAction((movement) => {
+
+    const picked = viewer.scene.pick(movement.endPosition);
+    if (!Cesium.defined(picked) || !picked.getProperty) {
+      hoverDiv.style.display = "none";
+      return;
+    }
+
+    // 🔒 ONLY PIPES
+    const pipeId = getProp(picked, "textPipeID");
+    if (!pipeId) {
+      hoverDiv.style.display = "none";
+      return;
+    }
+
+    const pSensorId =
+      getProp(picked, "textassociatedPressureSensorID");
+
+    const fSensorId =
+      getProp(picked, "textassociatedFlowSensorID");
+
+    if (!pSensorId && !fSensorId) {
+      hoverDiv.style.display = "none";
+      return;
+    }
+
+    const pSensor = findSensorFeature(pSensorId);
+    const fSensor = findSensorFeature(fSensorId);
+
+    //console.log("Flow Sensor Feature:", fSensor?.getProperty("textfieldid"));
+
+
+    const pField = getProp(pSensor, "textfieldid");
+    const fField = getProp(fSensor, "textfieldid");
+
+    const pressure = getTSValueFromIFC(pField);
+    const flow = getTSValueFromIFC(fField);
+
+
+    /*const pressure = getValueBySensorId(pSensorId);
+    const flow = getValueBySensorId(fSensorId);*/
+
+
+    hoverDiv.innerHTML = `
+      <b>Pipe:</b> ${pipeId}<br>
+      <b>Pressure:</b> ${pressure?.toFixed(2)} Bar<br>
+      <b>Flow:</b> ${flow?.toFixed(3)} L/min
+    `;
+
+    hoverDiv.style.left = movement.endPosition.x + 15 + "px";
+    hoverDiv.style.top  = movement.endPosition.y + 15 + "px";
+    hoverDiv.style.display = "block";
+
+  }, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
+
+});
+</script>
+</body>
+</html>

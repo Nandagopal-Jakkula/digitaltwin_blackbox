@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
+  <title>Cesium IFC – Pipe Monitoring Dashboard</title>
+
+  <link href="https://cesium.com/downloads/cesiumjs/releases/1.128/Build/Cesium/Widgets/widgets.css" rel="stylesheet"/>
+  <script src="https://cesium.com/downloads/cesiumjs/releases/1.128/Build/Cesium/Cesium.js" defer></script>
+
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+
+<body>
+<div id="cesiumContainer"></div>
+
+<!-- Dashboard Panel -->
+<div id="dashboardPanel">
+  <div id="dashboardHeader" onclick="toggleDashboard()">
+    <h2>📊 Pipe Monitoring Dashboard</h2>
+    <span class="toggle-icon">▼</span>
+  </div>
+  <div id="dashboardContent">
+    <!-- Stats -->
+    <div class="stats-container">
+      <div class="stat-card">
+        <div class="value" id="totalPipes">0</div>
+        <div class="label">Total Pipes</div>
+      </div>
+      <div class="stat-card">
+        <div class="value" id="avgPressure">--</div>
+        <div class="label">Avg Bar</div>
+      </div>
+      <div class="stat-card">
+        <div class="value" id="leakCount">0</div>
+        <div class="label">Leaks</div>
+      </div>
+    </div>
+
+    <!-- Search -->
+    <div class="search-container">
+      <input type="text" id="pipeSearch" placeholder="🔍 Search pipes..." oninput="filterPipes()">
+    </div>
+
+    <!-- Pipe List -->
+    <div class="pipe-list" id="pipeList">
+      <div class="empty-state">
+        <div class="icon">📡</div>
+        <div>Loading pipes...</div>
+      </div>
+    </div>
+
+    <!-- Legend -->
+    <div class="legend">
+      <div class="legend-item">
+        <div class="legend-color pressure"></div>
+        <span>Pressure (Bar)</span>
+      </div>
+      <div class="legend-item">
+        <div class="legend-color flow"></div>
+        <span>Flow (L/min)</span>
+      </div>
+      <div class="legend-item">
+        <div class="legend-color leak"></div>
+        <span>Leak</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Refresh Indicator -->
+<div id="refreshIndicator">
+  <div class="spinner"></div>
+  <span>Live</span>
+  <span id="lastUpdated">--:--:--</span>
+</div>
+
+<script src="js/app.js" defer></script>
+</body>
+</html>
