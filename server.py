@@ -2,6 +2,7 @@ from flask import Flask, request, jsonify, send_from_directory, abort
 from flask_cors import CORS
 import requests
 import os
+import math
 
 app = Flask(__name__)
 CORS(app)
@@ -12,6 +13,11 @@ DEBUG_MODE = os.environ.get('FLASK_DEBUG', 'False').lower() == 'true'
 THINGSPEAK_URL = os.environ.get('THINGSPEAK_URL') or "https://api.thingspeak.com/channels/3104829/feeds/last.json?api_key=NYQKK6PS1ANTGD29"
 LEAK_PRESSURE_THRESHOLD = float(os.environ.get('LEAK_PRESSURE_THRESHOLD', '1.0'))
 LEAK_FLOW_THRESHOLD = float(os.environ.get('LEAK_FLOW_THRESHOLD', '1.0'))
+
+# Constants for leak area calculation (Orifice Equation)
+WATER_DENSITY = 1000  # kg/m³
+DISCHARGE_COEFFICIENT = 0.7  # Cd (0.6-0.8)
+GRAVITY = 9.81  # m/s²
 
 def fetch_thingspeak():
     try:
@@ -28,7 +34,6 @@ def fetch_thingspeak():
 def extract_field_value(latest, fieldId):
     if not fieldId or not latest:
         return None
-    import re
     m = re.search(r"(\d+)", str(fieldId))
     if not m:
         return None
@@ -42,6 +47,39 @@ def extract_field_value(latest, fieldId):
     except Exception:
         return None
 
+def calculate_leak_area_mm2(flowDeltaLmin, pressureInBar, burialDepth, soilDensity):
+    """
+    Calculate leak area using Orifice Equation: A = Q / (Cd * sqrt(2 * DeltaPe / rho))
+    Returns leak area in mm²
+    """
+    if flowDeltaLmin is None or pressureInBar is None or burialDepth is None or soilDensity is None:
+        return None
+    
+    if flowDeltaLmin <= 0:
+        return None
+    
+    try:
+        # Convert flow delta from L/min to m³/s
+        flowDeltaM3s = flowDeltaLmin / 60000.0
+        
+        # Calculate soil pressure in Pa: P_soil = ρ_soil * g * h
+        soilPressurePa = float(soilDensity) * GRAVITY * float(burialDepth)
+        
+        # Effective pressure difference: ΔPe = Pin - P_soil (convert Pin from bar to Pa)
+        pressureInPa = pressureInBar * 100000
+        deltaPe = pressureInPa - soilPressurePa
+        
+        # Calculate leak area using Orifice Equation
+        if deltaPe > 0:
+            leakAreaM2 = flowDeltaM3s / (DISCHARGE_COEFFICIENT * math.sqrt(2 * deltaPe / WATER_DENSITY))
+            # Convert to mm² (1 m² = 1,000,000 mm²)
+            leakAreaMm2 = leakAreaM2 * 1000000
+            return leakAreaMm2
+    except Exception:
+        pass
+    
+    return None
+
 @app.route('/api/latest')
 def latest():
     data = fetch_thingspeak()
@@ -53,12 +91,17 @@ def detect():
     pipes = body.get('pipes', [])
     latest = fetch_thingspeak()
     result = []
+    
+    import re
+    
     for p in pipes:
         pipeId = p.get('pipeId')
         pFieldIn = p.get('pFieldIn')
         pFieldOut = p.get('pFieldOut')
         fFieldIn = p.get('fFieldIn')
         fFieldOut = p.get('fFieldOut')
+        burialDepth = p.get('burialDepth')
+        soilDensity = p.get('soilDensity')
         
         # Extract in/out values
         pressureIn = extract_field_value(latest, pFieldIn)
@@ -70,6 +113,7 @@ def detect():
         pressureDelta = None
         flowDelta = None
         leakStatus = 'unknown'
+        leakAreaMm2 = None
         
         # Only detect leaks for pipes with BOTH in and out pressure sensors
         if pressureIn is not None and pressureOut is not None:
@@ -87,6 +131,10 @@ def detect():
             # Override to leak if flow delta also exceeds threshold
             if leakStatus != 'unknown' and flowDelta > LEAK_FLOW_THRESHOLD:
                 leakStatus = 'leak'
+            
+            # Calculate leak area if we have a leak
+            if leakStatus == 'leak':
+                leakAreaMm2 = calculate_leak_area_mm2(flowDelta, pressureIn, burialDepth, soilDensity)
         
         result.append({
             'pipeId': pipeId,
@@ -96,7 +144,8 @@ def detect():
             'flowOut': flowOut,
             'pressureDelta': pressureDelta,
             'flowDelta': flowDelta,
-            'leakStatus': leakStatus
+            'leakStatus': leakStatus,
+            'leakAreaMm2': leakAreaMm2
         })
     return jsonify({ 'pipes': result, 'latestTS': latest })
 

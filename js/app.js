@@ -85,6 +85,36 @@ function renderPipeList() {
       </div>
       <div class="sensor-data">
         <div class="sensor-item">
+          <div class="sensor-label">Pressure In</div>
+          <div class="sensor-value pressure">
+            ${pipe.pressureIn !== null ? pipe.pressureIn.toFixed(2) : '--'}
+            <span class="unit">Bar</span>
+          </div>
+        </div>
+        <div class="sensor-item">
+          <div class="sensor-label">Pressure Out</div>
+          <div class="sensor-value pressure">
+            ${pipe.pressureOut !== null ? pipe.pressureOut.toFixed(2) : '--'}
+            <span class="unit">Bar</span>
+          </div>
+        </div>
+        <div class="sensor-item">
+          <div class="sensor-label">Flow In</div>
+          <div class="sensor-value flow">
+            ${pipe.flowIn !== null ? pipe.flowIn.toFixed(3) : '--'}
+            <span class="unit">L/min</span>
+          </div>
+        </div>
+        <div class="sensor-item">
+          <div class="sensor-label">Flow Out</div>
+          <div class="sensor-value flow">
+            ${pipe.flowOut !== null ? pipe.flowOut.toFixed(3) : '--'}
+            <span class="unit">L/min</span>
+          </div>
+        </div>
+      </div>
+      <div class="sensor-data" style="margin-top:8px">
+        <div class="sensor-item">
           <div class="sensor-label">Pressure Δ</div>
           <div class="sensor-value pressure">
             ${pipe.pressureDelta !== null ? (pipe.pressureDelta > 0 ? '+' : '') + pipe.pressureDelta.toFixed(2) : '--'}
@@ -99,7 +129,12 @@ function renderPipeList() {
           </div>
         </div>
       </div>
-      ${pipe.leakStatus === 'leak' ? `<div style="margin-top:8px;color:#ff6b6b;font-weight:700">LEAK DETECTED</div>` : ''}
+      ${pipe.leakStatus === 'leak' ? `
+        <div style="margin-top:8px;padding:8px;background:rgba(255,107,107,0.2);border-radius:6px">
+          <div style="color:#ff6b6b;font-weight:700">⚠ LEAK DETECTED</div>
+          ${pipe.leakAreaMm2 !== null ? `<div style="color:#ff6b6b;font-size:12px;margin-top:4px">Leak Area: ${pipe.leakAreaMm2.toFixed(2)} mm²</div>` : ''}
+        </div>
+      ` : ''}
     </div>
   `).join('');
 }
@@ -158,7 +193,9 @@ async function fetchServerDetection() {
       pFieldIn: p.pFieldIn,
       pFieldOut: p.pFieldOut,
       fFieldIn: p.fFieldIn,
-      fFieldOut: p.fFieldOut
+      fFieldOut: p.fFieldOut,
+      burialDepth: p.burialDepth,
+      soilDensity: p.soilDensity
     }));
 
     console.log(`[fetchServerDetection] Sending ${allPipes.length} pipes to ${DETECT_ENDPOINT}`);
@@ -203,6 +240,7 @@ async function fetchServerDetection() {
         target.pressureDelta = (p.pressureDelta === null) ? null : Number(p.pressureDelta);
         target.flowDelta = (p.flowDelta === null) ? null : Number(p.flowDelta);
         target.leakStatus = p.leakStatus || 'normal';
+        target.leakAreaMm2 = (p.leakAreaMm2 === null) ? null : Number(p.leakAreaMm2);
         updatedCount++;
       }
     }
@@ -272,7 +310,7 @@ window.addEventListener('load', async () => {
   window.viewer = viewer;
 
   const ALLOWED_IFC_PROPERTIES = [
-    'textwaterpressuresensoridout','textoutflowsensorid','textassociatedPressureSensorID','textassociatedFlowSensorID','textInstallationType','dimensionsburieddepth','textwaterpressuresensoridin','textPipeID','textPipeMaterial','textinflowsensorid'
+    'textwaterpressuresensoridout','textoutflowsensorid','textassociatedPressureSensorID','textassociatedFlowSensorID','textInstallationType','dimensionsburieddepth','textwaterpressuresensoridin','textPipeID','textPipeMaterial','textinflowsensorid','textsoildensity'
   ];
 
   // minimal infoBox overlay code preserved (omitted here for brevity in example)
@@ -439,14 +477,19 @@ window.addEventListener('load', async () => {
           const pFieldOut = getProp(pSensorOut, 'textfieldid');
           const fFieldOut = getProp(fSensorOut, 'textfieldid');
           
+          // Extract burial depth and soil density from IFC
+          const burialDepth = getProp(f, 'dimensionsburieddepth');
+          const soilDensity = getProp(f, 'textsoildensity');
+          
           pipeFeatures[pipeId] = f;
           allPipes.push({ 
             pipeId, 
             pSensorIdIn, fSensorIdIn, pSensorIdOut, fSensorIdOut,
             pFieldIn, fFieldIn, pFieldOut, fFieldOut,
+            burialDepth, soilDensity,
             pressureIn: null, flowIn: null, pressureOut: null, flowOut: null,
             pressureDelta: null, flowDelta: null,
-            leakStatus: 'normal' 
+            leakStatus: 'normal', leakAreaMm2: null
           });
         }
       }
